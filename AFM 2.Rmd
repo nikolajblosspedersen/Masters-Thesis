@@ -1,0 +1,467 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-02-11"
+output: pdf_document
+---
+
+```{r}
+library(splines)
+library(splines2)
+```
+
+
+```{r}
+LL_AFM_std <- function(par,dist){
+  #likelihood for models where log(X)=beta*Z+sigma*W, for W ~ f(.).
+  #just need survival function for W to add new distribution to model
+  
+  if(tolower(dist) %in% c("lognorm","ln","lognormal")){ 
+    # standard normal for lognormal
+    S <- function(x){1-pnorm(x)}
+    
+  }else if(tolower(dist) %in% c("loglogistic","loglog","ll")){
+    S <- function(x){1/(1+exp(x))}
+  }else if(tolower(dist)%in% c("ep","exponentialpower","exp-pow")){
+    S <- function(x){exp(1-exp(exp(x)))}
+  }else{
+    
+    # standard extreme for Weibull
+    S <- function(x){exp(-exp(x))}
+  }
+  
+  #unbound <- function(x){ ifelse(x>1,x,exp(x-1))}
+  
+  n_par <- length(par)
+  
+  inner <- function(index,entry){
+    X <- fit_data[index,entry]
+    Y <- fit_data[index,5:ncol(fit_data)]
+    return(list( y = (log(X) - as.numeric(par[1:(n_par-1)]%*%t(Y)))/par[n_par], X = Y))
+  }
+  
+  S_mat <- matrix(0,nrow = nrow(fit_data),ncol = 4)
+  for(i in 1:4){
+    foo <- inner(1:nrow(fit_data),i)[[1]]
+    S_mat[,i] <- ifelse(foo == -Inf,1,ifelse(foo == Inf,0,S(foo)))
+    
+  }
+  
+  L <- (S_mat[,1]-S_mat[,2])/(S_mat[,3]-S_mat[,4])
+  
+  LogL <- 0-sum(log(L))
+  
+  LogL <- ifelse(is.na(LogL) |LogL == Inf, 10^10,LogL )
+  
+  return(LogL)
+}
+
+LL_AFM_std_grad <- function(par,dist){
+  #likelihood for models where log(X)=beta*Z+sigma*W, for W ~ f(.).
+  #just need survival function for W to add new distribution to model
+  
+  n_par <- length(par)
+  
+  # if(tolower(dist) %in% c("lognorm","ln","lognormal")){ 
+  # # standard normal for lognormal
+  # S <- function(x){1-pnorm(x)}
+  # dS <- function(x){-dnorm(x)}
+  # }else
+  
+  if(tolower(dist) %in% c("loglogistic","loglog","ll")){
+    S <- function(x){1/(1+exp(x))}
+    dH <- function(x){1/(1+exp(-x))}
+  }else if(tolower(dist)%in% c("ln","logn","lognormal")){
+    S <- function(x){1-pnorm(log(x))}
+    dH <- function(x){dnorm(log(x))/(x*S(x))}
+  }else if(tolower(dist)%in% c("ep","exponentialpower","exp-pow")){
+    S <- function(x){exp(1-exp(exp(x)))}
+    dH <- function(x){exp(x)*exp(exp(x))}
+  }else{
+    # standard extreme for Weibull
+    S <- function(x){exp(-exp(x))}
+    dH <- function(x){exp(x)}
+  }
+  
+  Y <- fit_data[,5:ncol(fit_data)]
+  eta <- exp(as.numeric(par[1:(n_par-1)]%*%t(Y)))
+  sigma <- par[n_par]
+  
+  S_mat <- matrix(0,nrow = nrow(fit_data),ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    S_mat[,i] <- ifelse(foo == 0,1,ifelse(foo == Inf,0,S(log(foo/eta)/sigma)))
+  }
+  
+  d_H_d_eta_mat <- matrix(0,nrow(fit_data), ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    d_H_d_eta_mat[,i] <- ifelse(foo == 0,0,ifelse(foo == Inf,0,dH(log(foo/eta)/sigma)))
+  }
+  
+  # vector for {(d/d(eta)H1)S1 - (d/d(eta)H2)S2}/{S1-S2} både censurering og trunkering
+  vec <-  ifelse(S_mat[,1] ==0, (-d_H_d_eta_mat[,1]),
+                 ((-d_H_d_eta_mat[,1])*S_mat[,1]-(-d_H_d_eta_mat[,2])*S_mat[,2])/(S_mat[,1]-S_mat[,2]))
+  vec <- vec - ifelse(S_mat[,3]==0,(-d_H_d_eta_mat[,3]),
+                      ((-d_H_d_eta_mat[,3])*S_mat[,3]-(-d_H_d_eta_mat[,4])*S_mat[,4])/(S_mat[,3]-S_mat[,4]))
+  
+  grad <- numeric(n_par)
+  
+  grad[1:(n_par-1)] <- colSums(outer(vec, rep(1,n_par-1))*(Y)/sigma)
+  
+  if(any(!is.finite(grad))){
+    index <- which(!is.finite(grad))
+    for(i in index){
+      grad[i] <- sign(par[i])*10^10
+    }
+  }
+  
+  d_H_d_sigma_mat <- matrix(0,nrow(fit_data), ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    d_H_d_sigma_mat[,i] <- ifelse(foo == 0,0,ifelse(foo == Inf,0,dH(log(foo/eta)/sigma)*log(foo/eta)))
+  }
+  
+  vec <-  ifelse(S_mat[,1]-S_mat[,2] ==0, 0,
+                 ((-d_H_d_sigma_mat[,1])*S_mat[,1]-(-d_H_d_sigma_mat[,2])*S_mat[,2])/(S_mat[,1]-S_mat[,2]))
+  vec <- vec - ifelse(S_mat[,3]-S_mat[,4]==0,0,
+                      ((-d_H_d_sigma_mat[,3])*S_mat[,3]-(-d_H_d_sigma_mat[,4])*S_mat[,4])/(S_mat[,3]-S_mat[,4]))
+  
+  grad[n_par] <- sum(vec/sigma^2)
+  
+  if(!is.finite(grad[n_par])){
+    grad[n_par] <- ifelse(par[n_par] < 1,-10^5,10^5)
+  }
+  
+  return(grad)
+}
+
+LL_AFM_gen <- function(par){
+  #likelihood for models where X=exp(beta*Z)W, for W ~ f(.; sigma).
+  #need surival function for W as a function of x and sigma
+  
+  n_par <- length(par)
+  
+  #if(tolower(dist) %in% c("gompertz","g","gom")){ 
+  S <- function(x){exp((1-exp(x))/par[n_par])}
+  
+  
+  
+  inner <- function(index,entry){
+    X <- fit_data[index,entry]
+    Y <- fit_data[index,5:ncol(fit_data)]
+    return(list( y = exp(-as.numeric(par[1:(n_par-1)]%*%t(Y)))*X, X = Y))
+  }
+  
+  S_mat <- matrix(0,nrow = nrow(fit_data),ncol = 4)
+  for(i in 1:4){
+    foo <- inner(1:nrow(fit_data),i)[[1]]
+    S_mat[,i] <- ifelse(foo == 0,1,ifelse(foo == Inf,0,S(foo)))
+  }
+  
+  L <- (S_mat[,1]-S_mat[,2])/(S_mat[,3]-S_mat[,4])
+  
+  LogL <- 0-sum(log(L))
+  
+  LogL <- ifelse(is.na(LogL) |LogL == Inf, 10^10,LogL )
+  
+  return(LogL)
+}
+
+LL_AFM_gen_grad <- function(par){
+  #likelihood for proportional hazard models
+  #fitted as = exp(beta*Z)*H(u|sigma,Z)), where H is cumulative hazard function
+  n_par <- length(par)
+  #if(tolower(dist) %in% c("gompertz","g","gom")){ 
+  
+  Y <- fit_data[,5:ncol(fit_data)]
+  eta <- exp(as.numeric(par[1:(n_par-1)]%*%t(Y)))
+  sigma <- par[n_par]
+  
+  S <- function(x){exp((1-exp(x))/sigma)}
+  
+  S_mat <- matrix(0,nrow = nrow(fit_data),ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    S_mat[,i] <- ifelse(foo == 0,1,ifelse(foo == Inf,0,S(foo/eta)))
+    
+  }
+  
+  d_H_d_eta <- function(x){x*exp(x/eta)/(eta*sigma)}
+  
+  d_H_d_sigma <- function(x){(exp(x/eta)-1)/sigma^2}
+  
+  d_H_d_eta_mat <- matrix(0,nrow(fit_data), ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    d_H_d_eta_mat[,i] <- ifelse(foo == 0,0,ifelse(foo == Inf,0,d_H_d_eta(foo)))
+  }
+  
+  # vector for {(d/d(eta)H1)S1 - (d/d(eta)H2)S2}/{S1-S2} både censurering og trunkering
+  vec <-  ifelse(S_mat[,1] ==0, (-d_H_d_eta_mat[,1]),
+                 ((-d_H_d_eta_mat[,1])*S_mat[,1]-(-d_H_d_eta_mat[,2])*S_mat[,2])/(S_mat[,1]-S_mat[,2]))
+  vec <- vec - ifelse(S_mat[,3]==0,(-d_H_d_eta_mat[,3]),
+                      ((-d_H_d_eta_mat[,3])*S_mat[,3]-(-d_H_d_eta_mat[,4])*S_mat[,4])/(S_mat[,3]-S_mat[,4]))
+  
+  grad <- numeric(n_par)
+  
+  grad[1:(n_par-1)] <- colSums(outer(vec, rep(1,n_par-1))*(Y))
+  
+  if(any(!is.finite(grad))){
+    index <- which(!is.finite(grad))
+    for(i in index){
+      grad[i] <- sign(par[i])*10^10
+    }
+  }
+  
+  d_H_d_sigma_mat <- matrix(0,nrow(fit_data), ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    d_H_d_sigma_mat[,i] <- ifelse(foo == 0,0,ifelse(foo == Inf,0,d_H_d_sigma(foo)))
+  }
+  
+  vec <-  ifelse(S_mat[,1]-S_mat[,2] ==0, 0,
+                 ((-d_H_d_sigma_mat[,1])*S_mat[,1]-(-d_H_d_sigma_mat[,2])*S_mat[,2])/(S_mat[,1]-S_mat[,2]))
+  vec <- vec - ifelse(S_mat[,3]-S_mat[,4]==0,0,
+                      ((-d_H_d_sigma_mat[,3])*S_mat[,3]-(-d_H_d_sigma_mat[,4])*S_mat[,4])/(S_mat[,3]-S_mat[,4]))
+  
+  grad[n_par] <- sum(vec)
+  
+  if(!is.finite(grad[n_par])){
+    grad[n_par] <- ifelse(par[n_par] < 1,-10^5,10^5)
+  }
+  
+  return(grad)
+}
+
+LL_PH_gen <- function(par){
+  #likelihood for proportional hazard models
+  #fitted as = exp(beta*Z)*H(u|sigma,Z)), where H is cumulative hazard function
+  n_par <- length(par)
+  #if(tolower(dist) %in% c("gompertz","g","gom")){ 
+  H <- function(x){(exp(x/par[n_par])-1)}
+  
+  Y <- fit_data[,5:ncol(fit_data)]
+  eta <- exp(-as.numeric(par[1:(n_par-1)]%*%t(Y)))
+  
+  S_mat <- matrix(0,nrow = nrow(fit_data),ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    S_mat[,i] <- ifelse(foo == 0,1,ifelse(foo == Inf,0,exp(-eta*H(foo))))
+    
+  }
+  
+  L <- (S_mat[,1]-S_mat[,2])/(S_mat[,3]-S_mat[,4])
+  
+  LogL <- 0-sum(log(L))
+  
+  LogL <- ifelse(is.na(LogL) |LogL == Inf, 10^10,LogL )
+  
+  return(LogL)
+}
+
+LL_PH_gen_grad <- function(par){
+  #likelihood for proportional hazard models
+  #fitted as = exp(beta*Z)*H(u|sigma,Z)), where H is cumulative hazard function
+  n_par <- length(par)
+  #if(tolower(dist) %in% c("gompertz","g","gom")){ 
+  
+  Y <- fit_data[,5:ncol(fit_data)]
+  eta <- exp(as.numeric(par[1:(n_par-1)]%*%t(Y)))
+  sigma <- par[n_par]
+  
+  H <- function(x){(exp(x/sigma)-1)}
+  
+  S_mat <- matrix(0,nrow = nrow(fit_data),ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    S_mat[,i] <- ifelse(foo == 0,1,ifelse(foo == Inf,0,exp(-1/eta*H(foo))))
+    
+  }
+  
+  d_H_d_eta <- function(x){(1-exp(x/sigma))/eta}
+  
+  d_H_d_sigma <- function(x){-x*exp(x/sigma)/(sigma^2*eta)}
+  
+  d_H_d_eta_mat <- matrix(0,nrow(fit_data), ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    d_H_d_eta_mat[,i] <- ifelse(foo == 0,0,ifelse(foo == Inf,0,d_H_d_eta(foo)))
+  }
+  
+  # vector for {(d/d(eta)H1)S1 - (d/d(eta)H2)S2}/{S1-S2} både censurering og trunkering
+  vec <-  ifelse(S_mat[,1] ==0, (-d_H_d_eta_mat[,1]),
+                 ((-d_H_d_eta_mat[,1])*S_mat[,1]-(-d_H_d_eta_mat[,2])*S_mat[,2])/(S_mat[,1]-S_mat[,2]))
+  vec <- vec - ifelse(S_mat[,3]==0,(-d_H_d_eta_mat[,3]),
+                      ((-d_H_d_eta_mat[,3])*S_mat[,3]-(-d_H_d_eta_mat[,4])*S_mat[,4])/(S_mat[,3]-S_mat[,4]))
+  
+  grad <- numeric(n_par)
+  
+  grad[1:(n_par-1)] <- colSums(outer(vec, rep(1,n_par-1))*(Y))
+  
+  if(any(!is.finite(grad))){
+    index <- which(!is.finite(grad))
+    for(i in index){
+      grad[i] <- sign(par[i])*10^10
+    }
+  }
+  
+  d_H_d_sigma_mat <- matrix(0,nrow(fit_data), ncol = 4)
+  for(i in 1:4){
+    foo <- fit_data[,i]
+    d_H_d_sigma_mat[,i] <- ifelse(foo == 0,0,ifelse(foo == Inf,0,d_H_d_sigma(foo)))
+  }
+  
+  vec <-  ifelse(S_mat[,1]-S_mat[,2] ==0, 0,
+                 ((-d_H_d_sigma_mat[,1])*S_mat[,1]-(-d_H_d_sigma_mat[,2])*S_mat[,2])/(S_mat[,1]-S_mat[,2]))
+  vec <- vec - ifelse(S_mat[,3]-S_mat[,4]==0,0,
+                      ((-d_H_d_sigma_mat[,3])*S_mat[,3]-(-d_H_d_sigma_mat[,4])*S_mat[,4])/(S_mat[,3]-S_mat[,4]))
+  
+  grad[n_par] <- sum(vec)
+  
+  if(!is.finite(grad[n_par])){
+    grad[n_par] <- ifelse(par[n_par] < 1,-10^5,10^5)
+  }
+  
+  return(0-grad)
+}
+
+
+AFM_fit <- function(data,dist,hessian = FALSE){
+  n_par <- ncol(data)-3
+  
+  if(dist %in% c("gompertzph","gph","gomph")){
+    LL_foo <- function(x){LL_PH_gen(x)}
+    gr <- function(x){LL_PH_gen_grad(x)}
+    scale <- 100
+  }else if(dist %in% c("gompertz","g","gom","gompertzafm","gafm","gomafm")){
+    LL_foo <- function(x){LL_AFM_gen(x)}
+    gr <- function(x){LL_AFM_gen_grad(x)}
+  }else{
+    LL_foo <- function(x){LL_AFM_std(x,dist)}
+    if(dist %in% c("lognorm","ln","lognormal")){gr <- NULL}
+    else{gr <- function(x){LL_AFM_std_grad(x,dist)}}
+  }
+  
+  choose_start <-function(){
+    best_LL<- 10^10
+    best_stard <- numeric(n_par)
+    for(i in c(1,(1:10)*10)){
+      for(j in 1:10){
+        start <- c(j,rep(0,n_par-2),i)
+        new_LL <-LL_foo(start)
+        if(new_LL < best_LL){
+          best_LL <- new_LL
+          best_start <- start
+        }
+        start <- c(rep(j,n_par-1),i)
+        new_LL <-LL_foo(start)
+        if(new_LL < best_LL){
+          best_LL <- new_LL
+          best_start <- start
+        }
+      }
+    }
+    return(best_start)
+  }
+  
+  start <- choose_start()
+  
+  obj <- optim(start, LL_foo,method = "L-BFGS-B", lower = c(rep(-Inf,n_par-1),0.001),
+               gr = gr, hessian = hessian,control = list(maxit = 1e4, pgtol = 0, ndeps = rep(1e-4, n_par)))
+  
+  names(obj$par) <- c(colnames(data)[5:(3+n_par)],"scale")
+  
+  if(hessian){
+    colnames(obj$hessian) <- rownames(obj$hessian) <- names(obj$par)
+  }
+  
+  return(obj)
+}
+
+
+ssurv <- function(x,eta,sigma,dist = "weib"){
+  if(dist %in% c("gompertzph","gph","gomph")){
+    return(exp((1-exp(x/sigma))/eta))
+  }else if(dist %in% c("gompertz","g","gom","gompertzafm","gafm","gomafm")){
+    return(exp((1-exp(x/eta))/sigma))
+  }else if(tolower(dist) %in% c("lognorm","ln","lognormal")){ 
+    # standard normal for lognormal
+    S <- function(x){1-pnorm(x)}
+  }else if(tolower(dist) %in% c("loglogistic","loglog","ll")){
+    S <- function(x){1/(1+exp(x))}
+  }else if(tolower(dist)%in% c("ep","exponentialpower","exp-pow")){
+    S <- function(x){exp(1-exp(exp(x)))}
+  }else{
+    # standard extreme for Weibull
+    S <- function(x){exp(-exp(x))}
+  }
+  
+  return(S((log(x)-log(eta))/sigma))
+}
+
+dsurv <- function(x,beta = 0,sigma = 1,Z = 1,dist = "weib"){
+  if(tolower(dist) %in% c("lognorm","ln","lognormal")){ 
+    # standard normal for lognormal
+    dS <- function(x){-dnorm(x)}
+  }else if(tolower(dist) %in% c("loglogistic","loglog","ll")){
+    dS <- function(x){-exp(x)/(1+exp(x))^2}
+  }else if(tolower(dist)%in% c("ep","exponentialpower","exp-pow")){
+    dS <- function(x){-exp(x)*exp(exp(x))*exp(1-exp(exp(x)))}
+  }else{
+    # standard extreme for Weibull
+    dS <- function(x){-exp(x-exp(x))}
+  }
+  
+  return(-dS((log(x)-sum(beta*Z))/sigma)/(x*sigma))
+}
+
+hsurv <- function(x,eta,sigma,dist = "weib"){
+  if(dist %in% c("gompertzph","gph","gomph")){
+    return(exp(x/sigma)/eta)
+  }else if(dist %in% c("gompertz","g","gom","gompertzafm","gafm","gomafm")){
+    return(exp(x/eta)/sigma/eta)
+  }else if(tolower(dist) %in% c("lognorm","ln","lognormal")){ 
+    # standard normal for lognormal
+    S <- function(x){1-pnorm(x)}
+    dS <- function(x){-dnorm(x)}
+  }else if(tolower(dist) %in% c("loglogistic","loglog","ll")){
+    S <- function(x){1/(1+exp(x))}
+    dS <- function(x){-exp(x)/(1+exp(x))^2}
+    
+  }else if(tolower(dist)%in% c("ep","exponentialpower","exp-pow")){
+    S <- function(x){exp(1-exp(exp(x)))}
+    dS <- function(x){-exp(x)*exp(exp(x))*exp(1-exp(exp(x)))}  
+  }else{
+    # standard extreme for Weibull
+    S <- function(x){exp(-exp(x))} 
+    dS <- function(x){-exp(x-exp(x))}
+  }
+  
+  return(-dS((log(x)-log(eta))/sigma)/(x*sigma*S((log(x)-log(eta))/sigma)))
+}
+
+qsurv <- function(x,eta,sigma,dist = "weib"){
+  if(!(0<x & x < 1)){stop()}
+  if(dist %in% c("gompertzph","gph","gomph")){
+    return(log(-log(1-x)*eta+1)*sigma)
+  }else if(dist %in% c("gompertz","g","gom","gompertzafm","gafm","gomafm")){
+    return(log(-log(1-x)*sigma+1)*eta)
+  }else if(tolower(dist)%in% c("ep","exponentialpower","exp-pow")){
+    return(exp(log(log(1-log(1-x))*eta)*sigma))
+  }else{
+    return(exp(log(-log(1-x)*eta)*sigma))
+  }
+}
+
+qsurv <- Vectorize(qsurv, vectorize.args = c("x","eta","sigma"))
+
+rsurv <- function(n, eta,sigma,dist = "weib"){
+  return(qsurv(runif(n),eta,sigma,dist))
+}
+
+rsurv <- Vectorize(rsurv, vectorize.args = c("n","eta","sigma"))
+
+```
+
+
