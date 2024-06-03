@@ -1,0 +1,258 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-03-31"
+output: pdf_document
+---
+
+```{r}
+library(splines2)
+library(optimx)
+
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+dat <- read.csv("C:/Users/nikol/Documents/AU/Speciale/DATA.csv")
+
+dat$Interaction <- interaction(dat$simplifiedMaterial,dat$DandasID,dat$TypeAfloebKode)
+
+dat2 <- read.table("~/AU/Speciale/Envidan data/abc-klasser-VCS.txt", header = T)
+
+dat2$ID <- paste(dat2$ID,"VC", sep = "_")
+
+dat <- merge(dat,dat2,by = "ID", all.x = T)
+
+datA <- dat[-which(dat$CL==0 & dat$CR == Inf),]
+datB <- dat[-which(dat$CL_B == 0 & dat$CR_B == Inf),]
+
+Beton <- datA[which(datA$simplifiedMaterial == "Beton" & datA$Laengde >= 1),]
+Beton$DandasID <- relevel(as.factor(Beton$DandasID),ref = 2)
+
+index <- which(Beton$Laengde >= 80)
+
+Beton$Laengde2 <- Beton$Laengde
+
+Beton$Laengde2[index] <- 0
+
+Beton$Log_Laengde2 <- log(Beton$Laengde)
+
+Beton$Log_Laengde2[index] <- 0 
+
+Beton$Laengde_over80 <- 0
+Beton$Laengde_over80[index] <- 1
+
+Beton$Disc_Dim <- ifelse(Beton$Dimension < 200, "Dim<200",ifelse(Beton$Dimension > 900,"Dim>900", "200<Dim<900"))
+
+Beton$Dim_less200 <- Beton$Dimension <200
+
+Beton$Dim_over900 <- Beton$Dimension >= 900
+
+Beton$Jord_ML <- grepl("ML",Beton$Jordart)
+
+Beton$Dybde_weird <- Beton$Dybde == 2.465
+
+Beton$Dybde_less1.2 <- Beton$Dybde <= 1.2
+
+Beton$Dybde2 <- Beton$Dybde
+Beton$Dybde2[which(Beton$Dybde_weird)] <- min(Beton$Dybde)
+
+Beton$Disc_Depth <- ifelse(Beton$Dybde < 2, "Depth<2",ifelse(Beton$Dybde > 3,"Dim>3", "2<Dim<3"))
+```
+
+```{r}
+cox_snell <- function(data, par,dist){
+  n_par <- ncol(data)-3
+  if(length(par) != n_par ){stop()}
+  
+  beta <- par[1:(length(par)-1)]
+  sigma <- par[length(par)]
+  n_par <- ncol(data)-3
+  if(n_par == 2){
+    eta <- exp(beta*data[,5])
+  }else{
+  eta <- exp(rowSums(outer(rep(1,nrow(data)),beta)*data[5:(ncol(data)-1)]))
+  }
+
+ S_CL <- ssurv(data[,1],eta,sigma, dist)
+ S_CL <- ifelse(data[,1] == 0 , 0, -log(S_CL))
+ 
+ S_CR <- ssurv(data[,2],eta,sigma, dist)
+ S_CR <- ifelse(data[,2] == Inf,Inf,-log(S_CR))
+ return(cbind(S_CL,S_CR))
+}
+
+Eta <- function(data, par){
+  n_par <- ncol(data)-3
+  if(length(par) != n_par ){stop()}
+  
+  beta <- par[1:(length(par)-1)]
+  sigma <- par[length(par)]
+  n_par <- ncol(data)-3
+  if(n_par == 2){
+    eta <- exp(beta*data[,5])
+  }else{
+  eta <- exp(rowSums(outer(rep(1,nrow(data)),beta)*data[5:(ncol(data)-1)]))
+  }
+ return(eta)
+}
+
+```
+
+```{r}
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL~DandasID + TypeAfloebKode),#+ sqrt(Laengde)+Laengde_out),#+
+                               # nsk(Age, df = 4,intercept = FALSE, trim = 0.05)),
+            data = Beton, message = F)[[1]]
+
+foo1 <- nsk(Beton$Age, df = 4,intercept = FALSE, trim = 0.05)
+
+knots_val_1 <- sort(c(attr(foo1,"knots"),attr(foo1,"Boundary.knots")))[-1]
+
+colnames(fit_data)[grepl("nsk(Age",colnames(fit_data),fixed = T)] <- paste("Age",paste(length(knots_val_1),knots_val_1,sep="_"), sep = "_")
+
+colnames(fit_data)
+```
+
+```{r,fig.width= 11, fig.height=4}
+par(mai = c(0.6,0.5,0.3,0.2),las = 1, mfrow = c(1,2), las = 1,cex.axis = 0.9,mgp = c(1.3, 0.5, 0))
+par(fig = c(0,0.4,0,1))
+
+
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL~DandasID + TypeAfloebKode),#+ sqrt(Laengde)+Laengde_out),#+
+                               # nsk(Age, df = 4,intercept = FALSE, trim = 0.05)),
+            data = Beton, message = F)[[1]]
+
+# CS <- cox_snell(fit_data,c(4.702001342,-0.105054453,-0.353002063,-0.12249382,-0.104498004,0.471452293),"weib")
+# CS <- round(CS*4,1)/4
+# CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+# 
+# fitT <- turnbull(CS[,1],CS[,2])
+# plot(fitT,"H")
+CS <- cox_snell(fit_data,c(3.504981151,-0.100328744,-0.348913957,-0.115602946,-0.133669388,19.92837812),"gafm")
+CS <- round(CS*4,1)/4
+CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+
+fitT_gafm_M <- turnbull(CS[,1],CS[,2])
+
+CS <- cox_snell(fit_data,c(3.541336412,-0.233036106,-0.77491881,-0.303603291,-0.281095588,26.28252542),"gph")
+CS <- round(CS*4,1)/4
+CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+
+fitT_gph_M <- turnbull(CS[,1],CS[,2])
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL~DandasID + TypeAfloebKode + Log_Laengde2 + Laengde_over80),#+ sqrt(Laengde)+Laengde_out),#+
+                               # nsk(Age, df = 4,intercept = FALSE, trim = 0.05)),
+            data = Beton, message = F)[[1]]
+
+CS <- cox_snell(fit_data,c(4.071465245,-0.065195977,-0.323003257,-0.110451656,
+                           -0.139406391,-0.152942785,-0.753828241,18.96632451),"gafm")
+CS <- round(CS*4,1)/4
+CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+
+fitT_gafm_M_L <- turnbull(CS[,1],CS[,2])
+
+CS <- cox_snell(fit_data,c(4.764636193,-0.147651308,-0.703187074,-0.2892293,
+                           -0.294786628,-0.349602898,-1.825300768,26.44152532),"gph")
+CS <- round(CS*4,1)/4
+CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+
+fitT_gph_M_L <- turnbull(CS[,1],CS[,2])
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL~DandasID + TypeAfloebKode + Log_Laengde2 + Laengde_over80 + Dim_less200 + Dim_over900),
+            data = Beton, message = F)[[1]]
+
+CS <- cox_snell(fit_data,c(4.107751881,-0.07164182,-0.327568105,-0.102068908,-0.123783821,
+                           -0.160180589,-0.790972926,-0.13399513,0.089829938,18.62737684),"gafm")
+CS <- round(CS*4,1)/4
+CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+
+fitT_gafm_M_L_D <- turnbull(CS[,1],CS[,2])
+
+CS <- cox_snell(fit_data,c(4.828336519,-0.164002693,-0.712766841,-0.275746599,-0.256519419,
+                           -0.368105216,-1.925403867,-0.373244076,0.240250104,26.56758717),"gph")
+CS <- round(CS*4,1)/4
+CS[,2] <- ifelse(CS[,1]== CS[,2], CS[,2]+0.1,CS[,2])
+
+fitT_gph_M_L_D <- turnbull(CS[,1],CS[,2])
+```
+
+
+```{r,fig.width= 11, fig.height=4}
+par(mai = c(0.6,0.5,0.3,0.2),las = 1, mfrow = c(1,2), las = 1,cex.axis = 0.9,mgp = c(1.3, 0.5, 0))
+par(fig = c(0,0.4,0,1))
+
+plot(fitT_gafm_M,"h", col = "blue", xlim = c(0,2), ylim = c(0,2), xlab = "", main = "H(t) of Cox-Snell res.", ylab = "")
+
+plot(fitT_gph_M,"h",col = "green",add =T)
+abline(a = 0,b= 1)
+par(fig = c(0.4,0.8,0,1), new = T)
+
+
+plot(fitT_gafm_M, col = "blue", xlim = c(0,2), ylim = c(0,1), xlab = "", main = "S(t) of Cox-Snell res.", ylab = "")
+curve(exp(-x),add=T)
+plot(fitT_gph_M,col = "green",add =T)
+
+par(fig = c(0.75,1,0,1), new = T)
+plot.new()
+legend( "center",legend = c("Theoretical","Gompertz (AFM)","Gompertz (PH)"), lty = 1, col = c("black","blue","green"))
+```
+```{r,fig.width= 11, fig.height=4}
+par(mai = c(0.6,0.5,0.3,0.2),las = 1, mfrow = c(1,2), las = 1,cex.axis = 0.9,mgp = c(1.3, 0.5, 0))
+par(fig = c(0,0.4,0,1))
+
+plot(fitT_gafm_M_L,"h", col = "blue", xlim = c(0,2), ylim = c(0,2), xlab = "", main = "H(t) of Cox-Snell res.", ylab = "")
+
+plot(fitT_gph_M_L,"h",col = "green",add =T)
+abline(a = 0,b= 1)
+par(fig = c(0.4,0.8,0,1), new = T)
+
+
+plot(fitT_gafm_M_L, col = "blue", xlim = c(0,2), ylim = c(0,1), xlab = "", main = "S(t) of Cox-Snell res.", ylab = "")
+curve(exp(-x),add=T)
+plot(fitT_gph_M_L,col = "green",add =T)
+
+par(fig = c(0.75,1,0,1), new = T)
+plot.new()
+legend( "center",legend = c("Theoretical","Gompertz (AFM)","Gompertz (PH)"), lty = 1, col = c("black","blue","green"))
+```
+```{r,fig.width= 11, fig.height=4}
+par(mai = c(0.6,0.5,0.3,0.2),las = 1, mfrow = c(1,2), las = 1,cex.axis = 0.9,mgp = c(1.3, 0.5, 0))
+par(fig = c(0,0.4,0,1))
+
+plot(fitT_gafm_M_L_D,"h", col = "blue", xlim = c(0,2), ylim = c(0,2), xlab = "", main = "H(t) of Cox-Snell res.", ylab = "")
+
+plot(fitT_gph_M_L_D,"h",col = "green",add =T)
+abline(a = 0,b= 1)
+par(fig = c(0.4,0.8,0,1), new = T)
+
+
+plot(fitT_gafm_M_L_D, col = "blue", xlim = c(0,2), ylim = c(0,1), xlab = "", main = "S(t) of Cox-Snell res.", ylab = "")
+curve(exp(-x),add=T)
+plot(fitT_gph_M_L_D,col = "green",add =T)
+
+par(fig = c(0.75,1,0,1), new = T)
+plot.new()
+legend( "center",legend = c("Theoretical","Gompertz (AFM)","Gompertz (PH)"), lty = 1, col = c("black","blue","green"))
+```
+
+```{r,fig.width= 11, fig.height=4}
+par(mai = c(0.6,0.5,0.3,0.2),las = 1, mfrow = c(1,2), las = 1,cex.axis = 0.9,mgp = c(1.3, 0.5, 0))
+
+plot(fitT_gafm_M, type = "H")
+plot(fitT_gafm_M_L, add = T, col = "blue", type = "H")
+plot(fitT_gafm_M_L_D, add = T, col = "green", type = "H")
+abline(a = 0,b= 1)
+
+plot(fitT_gafm_M, xlim = c(0,2),ylim = c(0,1))
+plot(fitT_gafm_M_L, add = T, col = "blue")
+plot(fitT_gafm_M_L_D, add = T, col = "green")
+curve(exp(-x), add = T)
+```
+
+
+

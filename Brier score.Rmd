@@ -1,0 +1,154 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-04-09"
+output: pdf_document
+---
+
+```{r}
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+dat <- read.csv("C:/Users/nikol/Documents/AU/Speciale/DATA.csv")
+
+dat$Interaction <- interaction(dat$simplifiedMaterial,dat$DandasID,dat$TypeAfloebKode)
+
+dat2 <- read.table("~/AU/Speciale/Envidan data/abc-klasser-VCS.txt", header = T)
+
+dat2$ID <- paste(dat2$ID,"VC", sep = "_")
+
+dat <- merge(dat,dat2,by = "ID", all.x = T)
+
+datA <- dat[-which(dat$CL==0 & dat$CR == Inf),]
+datB <- dat[-which(dat$CL_B == 0 & dat$CR_B == Inf),]
+
+Beton <- datA[which(datA$simplifiedMaterial == "Beton" & datA$Laengde >= 1),]
+Beton$DandasID <- relevel(as.factor(Beton$DandasID),ref = 2)
+
+index <- which(Beton$Laengde >= 80)
+
+Beton$Laengde2 <- Beton$Laengde
+
+Beton$Laengde2[index] <- 0
+
+Beton$Log_Laengde2 <- log(Beton$Laengde)
+
+Beton$Log_Laengde2[index] <- 0 
+
+Beton$Laengde_over80 <- 0
+Beton$Laengde_over80[index] <- 1
+
+Beton$Disc_Dim <- ifelse(Beton$Dimension < 200, "Dim<200",ifelse(Beton$Dimension > 900,"Dim>900", "200<Dim<900"))
+
+Beton$Dim_less200 <- Beton$Dimension <200
+
+Beton$Dim_over900 <- Beton$Dimension >= 900
+
+Beton$Jord_ML <- grepl("ML",Beton$Jordart)
+
+Beton$Dybde_weird <- Beton$Dybde == 2.465
+
+Beton$Dybde_less1.2 <- Beton$Dybde <= 1.2
+
+Beton$Dybde2 <- Beton$Dybde
+Beton$Dybde2[which(Beton$Dybde_weird)] <- min(Beton$Dybde)
+
+Beton$Disc_Depth <- ifelse(Beton$Dybde < 2, "Depth<2",ifelse(Beton$Dybde > 3,"Dim>3", "2<Dim<3"))
+```
+
+
+```{r}
+BrierRes <- function(data,par, dist = "gafm", t= 70){
+  n_par <- ncol(data)-3
+  if(length(par) != n_par ){stop()}
+  
+  beta <- par[1:(length(par)-1)]
+  sigma <- par[length(par)]
+  if(n_par == 2){
+    eta <- exp(beta*data[,5])
+  }else{
+  eta <- exp(rowSums(outer(rep(1,nrow(data)),beta)*data[5:(ncol(data)-1)]))
+  }
+  S_CL <- ssurv(data[,1],eta,sigma, dist)
+  S_CR <- ssurv(data[,2],eta,sigma, dist)
+  S_t <-  ssurv(t,eta,sigma, dist)
+  
+  P_t <- (S_t- S_CR)/(S_CL-S_CR)
+  
+  P_t <- ifelse(is.nan(P_t),1,P_t)
+  
+  forecast <- ifelse(t >= data[,2], 0, ifelse(t < data[,1], 1, P_t))
+  
+  total <- (forecast-S_t)^2
+  
+  return(total)
+}
+
+BrierCurve <- function(data,par, dist = "gafm", t= 70){
+  return(mean(BrierRes(data,par,dist,t)))
+}
+
+BrierScore <- function(data,par, dist = "gafm"){
+  total <- numeric(100)
+  for(i in 1:100){
+    total[i] <- BrierCurve(data,par,dist,i)
+  }
+  return(sum(total))
+}
+
+```
+
+```{r}
+bs <- matrix(0,nrow = 100, ncol = 4)
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL~1),
+            data = Beton, message = F)[[1]]
+
+par <- c(3.592006189,10.78945092)
+
+for( i in 1:100){
+bs[i,1] <- BrierCurve(fit_data,par, t = i)
+}
+
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL~DandasID + TypeAfloebKode),#+ sqrt(Laengde)+Laengde_out),#+
+                               # nsk(Age, df = 4,intercept = FALSE, trim = 0.05)),
+            data = Beton, message = F)[[1]]
+
+par <- c(3.504981151,-0.100328744,-0.348913957,-0.115602946,-0.133669388,19.92837812)
+
+for( i in 1:100){
+bs[i,2] <- BrierCurve(fit_data,par, t = i)
+}
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL ~DandasID+TypeAfloebKode+Log_Laengde2+Laengde_over80),
+            data = Beton, message = F)[[1]]
+
+par <- c(4.071465245,-0.065195977,-0.323003257,-0.110451656,-0.139406391,-0.152942785,-0.753828241,18.96632451)
+
+for( i in 1:100){
+bs[i,3] <- BrierCurve(fit_data,par, t = i)
+}
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL ~DandasID+TypeAfloebKode + Log_Laengde2 + Laengde_over80 + Dim_less200 + Dim_over900),
+            data = Beton, message = F)[[1]]
+
+par <- c(4.107751881,-0.07164182,-0.327568105,-0.102068908,-0.123783821,
+         -0.160180589,-0.790972926,-0.13399513,0.089829938,18.62737684)
+
+
+
+for( i in 1:100){
+bs[i,4] <- BrierCurve(fit_data,par, t = i)
+}
+plot(bs[,1], type = "l", lty = 1, ylim = c(0,max(bs)))
+lines(bs[,2], col = "red")
+lines(bs[,3], col = "blue")
+lines(bs[,4], col = "green")
+grid()
+```
+
+

@@ -1,0 +1,203 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-05-08"
+output: pdf_document
+---
+
+$$ g(\eta,\sigma)= logit\ S(t,\eta,\sigma) $$
+$$\frac{\partial g}{\partial \beta_i} = logit'(S(t,\eta(\beta),sigma))\cdot \frac{\partial}{\partial \beta_i}S(t,\eta(\beta),\sigma)$$
+
+
+
+```{r}
+grad_logit_s <- function(t, Z,par){
+  if(t <= 0){ return(1)}
+  Z <- as.numeric(Z)
+  eta <- exp(sum(Z*par[1:(length(par)-1)]))
+  sigma <- unname(par[length(par)])
+  H <- -log(ssurv(t,eta,sigma, dist = "gafm"))
+  constant <- 1/(exp(-H)-1)
+  d_H_d_eta <- -t*exp(t/eta)/(sigma*eta^2)
+  d_H_d_sigma <- (1-exp(t/eta))/sigma^2
+  result <- constant*c(d_H_d_eta *Z,d_H_d_sigma)
+  return(result)
+}
+grad_logit_s <- Vectorize( grad_logit_s, "t")
+
+se_tau <- function(t,Z,par,hessian){
+  if(t<= 0){return(0)}
+  Ng <- grad_logit_s(t,Z,par)
+  return(sqrt(t(Ng)%*%solve(hessian)%*%Ng))
+}
+
+se_tau <- Vectorize(se_tau,"t")
+
+tau_CI_lower <- function(t,Z,par,hessian, alpha = 0.95){
+  if(t <= 0){return(1)}
+  Z <- as.numeric(Z)
+  eta <- exp(sum(Z*par[1:(length(par)-1)]))
+  sigma <- unname(par[length(par)])
+  logit <- function(x){log(x/(1-x))}
+  logit_inv <- function(x){1/(1+exp(-x))}
+  est_tau <- logit(ssurv(t,eta,sigma, dist = "gafm"))
+  return( logit_inv(est_tau- qnorm(1-(1-alpha)/2)*se_tau(t,Z,par,hessian)))
+}
+
+tau_CI_lower <- Vectorize(tau_CI_lower, "t")
+
+tau_CI_upper <- function(t,Z,par,hessian, alpha = 0.95){
+  if(t <= 0){return(1)}
+  Z <- as.numeric(Z)
+  eta <- exp(sum(Z*par[1:(length(par)-1)]))
+  sigma <- unname(par[length(par)])
+  logit <- function(x){log(x/(1-x))}
+  logit_inv <- function(x){1/(1+exp(-x))}
+  est_tau <- logit(ssurv(t,eta,sigma, dist = "gafm"))
+  return( logit_inv(est_tau+ qnorm(1-(1-alpha)/2)*se_tau(t,Z,par,hessian)))
+}
+
+tau_CI_upper <- Vectorize(tau_CI_upper, "t")
+
+quantile_CI <- function(q,Z,par,hessian,alpha  =0.95){
+  if(!(0<q& q<1)){stop()}
+  Z <- as.numeric(Z)
+  eta <- exp(sum(Z*par[1:(length(par)-1)]))
+  sigma <- unname(par[length(par)])
+  est <- qsurv(q,eta,sigma, dist = "gafm")
+  d_qsurv_d_sigma <- log(1-q)*eta/(1-log(1-q)*sigma)
+  grad <- c(est*Z,d_qsurv_d_sigma)
+  se <- sqrt(t(grad)%*%solve(hessian)%*%grad)
+  return( est + c(-1,0,1)*qnorm(1-(1-alpha)/2))
+}
+```
+
+```{r, fig.width= 11, fig.height= 4}
+layout(matrix(c(1,2,3),nrow= 1, ncol = 3),widths = c(7,7,2))
+par(mai = c(0.7,0.6,1,0.1),las=1,cex = 1 ,mgp = c(1.8, 0.5, 0))
+#obs 57241
+#Beton[57241,c("DandasID","TypeAfloebKode","Laengde","Dimension")]
+
+Z <- c(1,0,0,0,0,log(1.01),0,0,0)
+
+plot(0:100,ssurv(0:100, exp(sum(Z*fit$par[1:(length(fit$par)-1)])), fit$par[length(fit$par)], dist = "gafm"),
+     type = "l", ylab = "S(t)", ylim = c(0,1), xlab = "time (years)", main = c("Parametric est. Survival function",
+                                                                               "Utility: Novafos (NF)",
+                                                                               "Content: Combined",
+                                                                               "Length: 1.01m",
+                                                                               "Dimension: 250mm"))
+lines(0:100,tau_CI_lower(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+lines(0:100,tau_CI_upper(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+grid()
+
+#obs 10045
+#Beton[10045,c("DandasID","TypeAfloebKode","Laengde","Dimension")]
+
+Z <- c(1,0,1,0,1,0,1,1,0)
+
+plot(0:100,ssurv(0:100, exp(sum(Z*fit$par[1:(length(fit$par)-1)])), fit$par[length(fit$par)], dist = "gafm"),
+     type = "l", ylab = "S(t)", ylim = c(0,1), xlab = "time (years)",main = c("Parametric est. Survival function",
+                                                                               "Utility: Vandcenter Syd (VC)",
+                                                                               "Content: Sewage",
+                                                                               "Length: 82.79m",
+                                                                               "Dimension: 160mm"))
+lines(0:100,tau_CI_lower(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+lines(0:100,tau_CI_upper(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+grid()
+
+# Z <- c(1,0,1,0,1,log(40),0,0,0)
+# 
+# plot(ssurv(0:100, exp(sum(Z*fit$par[1:(length(fit$par)-1)])), fit$par[length(fit$par)], dist = "gafm"),
+#      type = "l", ylab = "S(t)", ylim = c(0,1))
+# lines(tau_CI_lower(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+# lines(tau_CI_upper(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+# grid()
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("Estimate","CI"), lty = c(1,2),col = c("black","blue"), pt.cex = 1, cex = 0.8)
+```
+```{r}
+quantile_CI(0.5, c(1,0,1,0,1,0,1,1,0),fit$par, fit$hessian)
+```
+
+
+```{r}
+Z <- c(1,0,0,0,0,log(42),0,0,0)
+
+plot(ssurv(0:100, exp(sum(Z*fit$par[1:(length(fit$par)-1)])), fit$par[length(fit$par)], dist = "gafm"),
+     type = "l", ylab = "S(t)", ylim = c(0,1))
+#lines(tau_CI_lower(0:100,Z,fit$par,fit$hessian), lty = 2 )
+#lines(tau_CI_upper(0:100,Z,fit$par,fit$hessian), lty = 2)
+grid()
+
+Z <- c(1,1,0,0,0,log(42),0,0,0)
+
+lines(ssurv(0:100, exp(sum(Z*fit$par[1:(length(fit$par)-1)])), fit$par[length(fit$par)], dist = "gafm"), col = "blue")
+#lines(tau_CI_lower(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+#lines(tau_CI_upper(0:100,Z,fit$par,fit$hessian), lty = 2, col = "blue")
+grid()
+
+Z <- c(1,0,1,0,0,log(42),0,0,0)
+
+lines(ssurv(0:100, exp(sum(Z*fit$par[1:(length(fit$par)-1)])), fit$par[length(fit$par)], dist = "gafm"),col = "red")
+#lines(tau_CI_lower(0:100,Z,fit$par,fit$hessian), lty = 2, col = "red")
+#lines(tau_CI_upper(0:100,Z,fit$par,fit$hessian), lty = 2, col = "red")
+grid()
+```
+
+```{r, fig.width= 11, fig.height= 4}
+layout(matrix(c(1,2,3),nrow= 1, ncol = 3),widths = c(7,7,3))
+par(mai = c(0.7,0.6,1,0.1),las=1,cex = 1 ,mgp = c(1.8, 0.5, 0))
+foo <- read.csv("~/AU/Speciale/Results/FinalModels.csv", header = T)[(1:6)*2-1,-c(1:4,6)]
+
+dist_vec <- c("gafm","gph","weib","ep","ln","ll")
+
+color <- rainbow(6)
+color[2] <- "orange"
+
+Z <- c(1,0,0,0,0,log(1.01),0,0,0)
+
+mean(rsurv(10000,exp(sum(Z*foo[1,1:(ncol(foo)-1)])), foo[1,ncol(foo)], dist = "gafm"))
+
+plot(0:100,ssurv(0:100, exp(sum(Z*foo[1,1:(ncol(foo)-1)])), foo[1,ncol(foo)], dist = "gafm"),
+     type = "l", ylab = "S(t)", ylim = c(0,1), xlab = "time (years)", col = color[1], main = c("Parametric est. Survival functions",
+                                                                               "Utility: Novafos (NF)",
+                                                                               "Content: Combined",
+                                                                               "Length: 1.01m",
+                                                                               "Dimension: 250mm"))
+for(i in 2:6){
+  lines(0:100,(ssurv(0:100, exp(sum(Z*foo[i,1:(ncol(foo)-1)])), foo[i,ncol(foo)], dist = dist_vec[i])), col = color[i])
+}
+grid()
+
+#obs 10045
+#Beton[10045,c("DandasID","TypeAfloebKode","Laengde","Dimension")]
+
+Z <- c(1,0,1,0,0,log(42),0,0,0)
+
+plot(0:100,ssurv(0:100, exp(sum(Z*foo[1,1:(ncol(foo)-1)])), foo[1,ncol(foo)], dist = "gafm"),
+     type = "l", ylab = "S(t)", ylim = c(0,1), xlab = "time (years)", col = color[1],main = c("Parametric est. Survival functions",
+                                                                               "Utility: Vandcenter Syd (VC)",
+                                                                               "Content: Sewage",
+                                                                               "Length: 82.79m",
+                                                                               "Dimension: 160mm"))
+
+for(i in 2:6){
+  lines((ssurv(0:100, exp(sum(Z*foo[i,1:(ncol(foo)-1)])), foo[i,ncol(foo)], dist = dist_vec[i])), col = color[i])
+}
+grid()
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("Gompertz AFM","Gompertz PH","Weibull","Exp. power","Log-normal","Log-logistic"), col = color, lty = 1)
+```
+```{r, fig.width= 11, fig.height= 8}
+plot(0:100,ssurv(0:100, exp(sum(Z*foo[1,1:(ncol(foo)-1)])), foo[1,ncol(foo)], dist = "gafm"),
+     type = "l", ylab = "S(t)", ylim = c(0,1), xlab = "time (years)", col = color[1])
+
+for(i in 2:2){
+  lines((ssurv(0:100, exp(sum(Z*foo[i,1:(ncol(foo)-1)])), foo[i,ncol(foo)], dist =dist_vec[i])), col = color[i])
+}
+grid()
+legend("bottomleft", legend = c("Gompertz AFM","Gompertz PH","Weibull","Exp. power","Log-normal","Log-logistic"), col = color, lty = 1)
+```
+

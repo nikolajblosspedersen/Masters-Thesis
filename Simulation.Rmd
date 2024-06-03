@@ -1,0 +1,902 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-04-12"
+output: pdf_document
+---
+
+```{r}
+library(MASS)
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+dat <- read.csv("C:/Users/nikol/Documents/AU/Speciale/DATA.csv")
+
+datA <- dat[-which(dat$CL==0 & dat$CR == Inf),]
+datB <- dat[-which(dat$CL_B == 0 & dat$CR_B == Inf),]
+
+Beton <- datA[which(datA$Materiale == "Beton" ),]
+```
+
+```{r, fig.width= 10, fig.height=5.5}
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_sample <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <- Sim1$YearFail <1980
+
+#Sim1$Gone_rep <- Sim1$Gone
+
+index <- which(!Sim1$Gone)
+
+Sim1$Sample <- runif(n)< 0.5
+
+Sim1$Gone_rep[index] <- ifelse(Sim1$YearEtableret < 1980,runif(n)<0.5 ,0)[index]
+
+Sim1$Sample2 <- ifelse(runif(n)< 0.1 + Sim1$Age/100*0.8,TRUE, FALSE)
+Sim1$Sample3 <- ifelse(runif(n)< 0.1 + (100-Sim1$Age)/100*0.8,TRUE, FALSE)
+
+table(Sim1$Gone,Sim1$Gone_rep)
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+foo <- turnbull(Sim1$CL[Sim1$Sample],Sim1$CR[Sim1$Sample])
+foo2 <- turnbull(Sim1$CL[which(Sim1$Sample2)],Sim1$CR[which(Sim1$Sample2)])
+foo3 <- turnbull(Sim1$CL[which(Sim1$Sample3)],Sim1$CR[which(Sim1$Sample3)])
+
+Result_sample[[1]][,i] <- S(foo,1:100)
+Result_sample[[2]][,i] <- S(foo2,1:100)
+Result_sample[[3]][,i] <- S(foo3,1:100)
+
+}
+
+layout(matrix(1:8,byrow = F,nrow= 2, ncol = 4),widths = c(7,7,7,3), heights = c(3,2))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main = c("No bias", "Favor old", "Favor young")[j])
+lines(Result_sample[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_sample[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+if(j==1){
+  truehist(Sim1$YearEtableret[Sim1$Sample], prob = F,ylab = "Frequency", xlab = "Year of construction", ylim = c(0,25000), col = "white")
+}else if(j ==2){
+  truehist(Sim1$YearEtableret[Sim1$Sample2], prob = F,ylab = "Frequency", xlab = "Year of construction", ylim = c(0,25000), col = "white")
+}else{truehist(Sim1$YearEtableret[Sim1$Sample3], prob = F,ylab = "Frequency", xlab = "Year of construction", ylim = c(0,25000), col = "white")}
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+
+```{r, fig.width= 10, fig.height=3.5}
+par(mai = c(0.5,0.5,0.3,0.05), mfrow = c(1,3),cex = 1 ,mgp = c(1.5, 0.5, 0))
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_surv_bias <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <- Sim1$Gone_rep <- Sim1$Gone_rep2 <- Sim1$YearFail <1980
+
+#Sim1$Gone_rep <- Sim1$Gone
+
+index <- which(!Sim1$Gone)
+
+Sim1$Gone_rep[index] <- ifelse(Sim1$YearEtableret < 1980,runif(n)<0.25 ,0)[index]
+Sim1$Gone_rep2[index] <- ifelse(Sim1$YearEtableret < 1980,runif(n)<0.5 ,0)[index]
+Sim1$Gone_rep3[index] <- ifelse(Sim1$YearEtableret < 1980,runif(n)<0.75 ,0)[index]
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+
+foo <- turnbull(Sim1$CL[which(!Sim1$Gone_rep)],Sim1$CR[which(!Sim1$Gone_rep)])
+foo2 <- turnbull(Sim1$CL[which(!Sim1$Gone_rep2)],Sim1$CR[which(!Sim1$Gone_rep2)])
+foo3 <- turnbull(Sim1$CL[which(!Sim1$Gone_rep3)],Sim1$CR[which(!Sim1$Gone_rep3)])
+
+Result_surv_bias[[1]][,i] <- S(foo,1:100)
+Result_surv_bias[[2]][,i] <- S(foo2,1:100)
+Result_surv_bias[[3]][,i] <- S(foo3,1:100)
+
+} 
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.5,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main =cbind(c("No old failures","25% old viable missing"), c("No old Failures","50% old viable missing"),
+                  c("No old Failures","75% old viable missing"))[,j])
+lines(Result_surv_bias[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_surv_bias[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+```{r, fig.width= 10, fig.height=3.5}
+par(mai = c(0.5,0.5,0.3,0.05), mfrow = c(1,3),cex = 1 ,mgp = c(1.5, 0.5, 0))
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_surv_bias2 <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+index <- which(Sim1$YearFail <1980)
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+ind <- sample(index, length(index)*0.75 )
+
+foo <- turnbull(Sim1$CL[-ind],Sim1$CR[-ind])
+
+ind <- sample(index, length(index)*0.5 )
+
+foo2 <- turnbull(Sim1$CL[-ind],Sim1$CR[-ind])
+
+ind <- sample(index, length(index)*0.25 )
+
+foo3 <- turnbull(Sim1$CL[-ind],Sim1$CR[-ind])
+
+Result_surv_bias2[[1]][,i] <- S(foo,1:100)
+Result_surv_bias2[[2]][,i] <- S(foo2,1:100)
+Result_surv_bias2[[3]][,i] <- S(foo3,1:100)
+
+}
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main = c("75% old failures missing", "50% old failures missing","25% old failures missing")[j])
+lines(Result_surv_bias2[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_surv_bias2[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+```{r, fig.width= 10, fig.height=3.5}
+par(mai = c(0.5,0.5,0.3,0.05), mfrow = c(1,3),cex = 1 ,mgp = c(1.5, 0.5, 0))
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_surv_bias3 <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+Sim1$Gone <- Sim1$YearFail <1970
+
+index <- which(!Sim1$Gone)
+
+foo <- turnbull(Sim1$CL[which(!Sim1$Gone)],Sim1$CR[which(!Sim1$Gone)])
+
+Result_surv_bias3[[1]][,i] <- S(foo,1:100)
+
+Sim1$Gone <- Sim1$YearFail <1980
+
+index <- which(!Sim1$Gone)
+
+foo2 <- turnbull(Sim1$CL[which(!Sim1$Gone)],Sim1$CR[which(!Sim1$Gone)])
+
+Result_surv_bias3[[2]][,i] <- S(foo2,1:100)
+
+Sim1$Gone <- Sim1$YearFail <1990
+
+index <- which(!Sim1$Gone)
+
+foo3 <- turnbull(Sim1$CL[which(!Sim1$Gone)],Sim1$CR[which(!Sim1$Gone)])
+
+Result_surv_bias3[[3]][,i] <- S(foo3,1:100)
+
+} 
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main =c("No failures before 1970", "No failures before 1980","No failures before 1990")[j])
+lines(Result_surv_bias3[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_surv_bias3[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+
+```{r, fig.width= 10, fig.height=3.5}
+par(mai = c(0.5,0.5,0.3,0.05), mfrow = c(1,3),cex = 1 ,mgp = c(1.5, 0.5, 0))
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_gen_failure <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+Sim1$Failed <- Sim1$YearFail <2024
+
+index <- which(Sim1$Failed)
+
+ind <- sample(index, length(index)*0.75 )
+
+foo <- turnbull(Sim1$CL[-ind],Sim1$CR[-ind])
+
+ind <- sample(index, length(index)*0.5 )
+
+foo2 <- turnbull(Sim1$CL[-ind],Sim1$CR[-ind])
+
+ind <- sample(index, length(index)*0.25 )
+
+foo3 <- turnbull(Sim1$CL[-ind],Sim1$CR[-ind])
+
+Result_gen_failure[[1]][,i] <- S(foo,1:100)
+Result_gen_failure[[2]][,i] <- S(foo2,1:100)
+Result_gen_failure[[3]][,i] <- S(foo3,1:100)
+
+} 
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main =c("75% failures missing", "50% failures missing","25% failures missing")[j])
+lines(Result_gen_failure[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_gen_failure[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+
+
+```{r, fig.width= 10, fig.height=3.5}
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_IC <- lapply(1:3, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result2 <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <- Sim1$YearFail <1980
+
+#Sim1$Gone_rep <- Sim1$Gone
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+index <- which(!Sim1$Gone)
+
+foo <- runif(n) < 1
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, Sim1$AgeFI+1 , Sim1$CR )
+
+foo <- turnbull(Sim1$CL_IC,Sim1$CR_IC)
+
+Result_IC[[1]][,i] <- S(foo,1:100)
+
+foo <- runif(n) < 0.5
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, Sim1$AgeFI+1 , Sim1$CR )
+
+foo2 <- turnbull(Sim1$CL_IC,Sim1$CR_IC)
+
+Result_IC[[2]][,i] <- S(foo2,1:100)
+
+foo <- runif(n) < 0.25
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, Sim1$AgeFI+1 , Sim1$CR )
+
+foo3 <-turnbull(Sim1$CL_IC,Sim1$CR_IC)
+
+Result_IC[[3]][,i] <- S(foo3,1:100)
+}
+
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main =c("100% Info. censoring", "50% Info. censoring","25% Info. censoring")[j])
+lines(Result_IC[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_IC[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+```{r, fig.width= 10, fig.height=3.5}
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_IC2 <- lapply(1:3, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result2 <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <- Sim1$YearFail <1980
+
+#Sim1$Gone_rep <- Sim1$Gone
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+index <- which(!Sim1$Gone)
+
+foo <- runif(n) < 0.5
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2020 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2020 & Sim1$YearFail > 1990 & foo,
+                     pmin(Sim1$AgeFI+1 + round(runif(n, min = 2 , max = 5)),100) , Sim1$CR )
+
+foo <- turnbull(Sim1$CL_IC,Sim1$CR_IC)
+
+Result_IC2[[1]][,i] <- S(foo,1:100)
+
+foo <- runif(n) < 0.25
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2020 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2020 & Sim1$YearFail > 1990 & foo,
+                     pmin(Sim1$AgeFI+1 + round(runif(n, min = 2 , max = 5)),100) , Sim1$CR )
+foo2 <- turnbull(Sim1$CL_IC,Sim1$CR_IC)
+
+Result_IC2[[2]][,i] <- S(foo2,1:100)
+
+foo <- runif(n) < 0.1
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2020 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2020 & Sim1$YearFail > 1990 & foo,
+                     pmin(Sim1$AgeFI+1 + round(runif(n, min = 2 , max = 5)),100) , Sim1$CR )
+foo3 <-turnbull(Sim1$CL_IC,Sim1$CR_IC)
+
+Result_IC2[[3]][,i] <- S(foo3,1:100)
+}
+
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main =c("50% Info. censoring", "25% Info. censoring","10% Info. censoring")[j])
+lines(Result_IC2[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_IC2[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+
+
+```{r, fig.width= 10, fig.height=3.5}
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_NDF <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <-  1990 <= Sim1$YearFail &Sim1$YearFail < 2024
+
+#Sim1$Gone_rep <- Sim1$Gone
+
+index <- which(Sim1$Gone)
+
+
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+
+
+foo <- turnbull(Sim1$CL[-index],Sim1$CR[-index])
+Result_NDF[[1]][,i] <- S(foo,1:100)
+
+foo <- -sample(index, length(index)/2)
+
+foo2 <- turnbull(Sim1$CL[foo],Sim1$CR[foo])
+foo <- -sample(index, length(index)/4)
+
+foo3 <- turnbull(Sim1$CL[foo],Sim1$CR[foo])
+
+
+Result_NDF[[2]][,i] <- S(foo2,1:100)
+Result_NDF[[3]][,i] <- S(foo3,1:100)
+
+}
+
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.15),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main = c("No young failures", "50% young failures missing","25% young failures missing")[j])
+lines(Result_NDF[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_NDF[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+```{r, fig.width= 10, fig.height=3.5}
+Sim1<- as.data.frame(sort(c(rep(1924:2023, each = 2000),rep(1960:1984, each = 2000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_corr <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+cop <- copula::normalCopula(1/2, dim = 2500, dispstr = "ar1")
+
+sim <- copula::rCopula(n/2500,cop)
+
+Sim1$AgeFail <- round(qsurv(sim, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+foo <- turnbull(Sim1$CL,Sim1$CR)
+Result_corr[[1]][,i] <- S(foo,1:100)
+
+cop <- copula::normalCopula(3/4, dim = 2000, dispstr = "ar1")
+
+sim <- copula::rCopula(n/2000,cop)
+
+Sim1$AgeFail <- round(qsurv(sim, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+foo <- turnbull(Sim1$CL,Sim1$CR)
+Result_corr[[2]][,i] <- S(foo,1:100)
+
+cop <- copula::normalCopula(9/10, dim = 2000, dispstr = "ar1")
+
+sim <- copula::rCopula(n/2000,cop)
+
+Sim1$AgeFail <- round(qsurv(sim, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+
+
+foo <- turnbull(Sim1$CL,Sim1$CR)
+Result_corr[[3]][,i] <- S(foo,1:100)
+}
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.3,0.05),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main = c("Decaying from cor. 1/2", "Decaying from cor. 3/4","Decaying from cor. 9/10")[j])
+lines(Result_corr[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_corr[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+```{r, fig.width= 10, fig.height=3.5}
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_imp_surv <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((4:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+for(j in min(Sim1$YearEtableret):max(Sim1$YearEtableret)){
+  conv <- (j - 1924)/100
+  
+  Sim1$AgeFail[which(Sim1$YearEtableret == j)] <- round(rsurv(sum(Sim1$YearEtableret == j),
+              eta[i+1]*conv + eta[i]*(1-conv),sigma,dist = "gafm"))
+}
+
+
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <-  1990 <= Sim1$YearFail &Sim1$YearFail < 2024
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+
+
+foo <- turnbull(Sim1$CL,Sim1$CR)
+Result_imp_surv[[1]][,i] <- S(foo,1:100)
+# 
+# foo <- -sample(index, length(index)/2)
+# 
+# foo2 <- turnbull(Sim1$CL[foo],Sim1$CR[foo])
+# foo <- -sample(index, length(index)/4)
+# 
+# foo3 <- turnbull(Sim1$CL[foo],Sim1$CR[foo])
+# 
+# 
+# Result_imp_surv[[2]][,i] <- S(foo2,1:100)
+# Result_imp_surv[[3]][,i] <- S(foo3,1:100)
+
+}
+
+par(mai = c(0.5,0.5,0.3,0.05), mfrow = c(1,3),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:1){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", col = "gray", lty = 2, ylab = "S(t)", xlab ="time",
+     main = c("Lifetime improves", "50% non-documented failures","25% non-documented failures")[j])
+  lines(ssurv(1:100,eta[2],10,dist = "gafm"), lty = 2)
+lines(Result_imp_surv[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i+1],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_imp_surv[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+}
+
+
+for(j in 1:1){
+plot(ssurv(1:100,eta[1+1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main = c("Dependent failure times", "50% non-documented failures","25% non-documented failures")[j])
+lines(Result_corr[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i+1],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_corr[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+}
+```
+
+```{r, fig.width= 10, fig.height=3.8}
+Sim1 <- as.data.frame(sort(c(rep(1924:2023, each = 20000),rep(1960:1984, each = 20000)))) #
+colnames(Sim1) <- "YearEtableret"
+n <- nrow(Sim1)
+
+Result_mix <- lapply(1:6, matrix, data= NA, nrow=100, ncol=4)
+
+eta <- exp(3.1840694 + log((5:8*10)/50))
+sigma <-10
+
+coef_result <- lapply(1:4, matrix, data= NA, nrow=2, ncol=4)
+for(i in 1:4){
+
+
+
+Sim1$AgeFail <- round(rsurv(n, eta[i],sigma,dist = "gafm"))
+
+Sim1$YearFail <- Sim1$AgeFail + Sim1$YearEtableret
+
+Sim1$YearTV <- round(runif(n,min = pmax(1990,Sim1$YearEtableret),max = 2024))
+
+Sim1$Age <- 2024 - Sim1$YearEtableret
+
+Sim1$AgeFI <- Sim1$YearTV - Sim1$YearEtableret
+
+Sim1$Gone <- Sim1$YearFail <1980
+
+Sim1$Gone_young <-  1990 <= Sim1$YearFail &Sim1$YearFail < 2024
+
+#Sim1$Gone_rep <- Sim1$Gone
+
+index <- which(Sim1$Gone_young)
+
+
+
+Sim1$CL <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Sim1$AgeFI,0)
+Sim1$CR <- ifelse(Sim1$AgeFI <= Sim1$AgeFail, Inf,Sim1$AgeFI+1)
+
+foo <- runif(n) < 0.25
+
+Sim1$CL_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, 0 , Sim1$CL )
+Sim1$CR_IC <- ifelse(Sim1$YearFail < 2024 & Sim1$YearFail > 1990 & foo, Sim1$AgeFI+1 , Sim1$CR )
+
+foo <- turnbull(Sim1$CL_IC[-which(Sim1$Gone)],Sim1$CR_IC[-which(Sim1$Gone)])
+Result_mix[[1]][,i] <- S(foo,1:100)
+
+foo <- sample(index, length(index))
+
+foo2 <- turnbull(Sim1$CL[-union(foo,Sim1$Gone)],Sim1$CR[-union(foo,Sim1$Gone)])
+
+Sim1$Sample <- ifelse(runif(n)< 0.1 + Sim1$Age/100*0.8,TRUE, FALSE)
+foo3 <- turnbull(Sim1$CL[setdiff(which(Sim1$Sample),which(Sim1$Gone))],Sim1$CR[setdiff(which(Sim1$Sample),which(Sim1$Gone))])
+
+Result_mix[[2]][,i] <- S(foo2,1:100)
+Result_mix[[3]][,i] <- S(foo3,1:100)
+
+}
+
+layout(matrix(c(1,2,3,4),nrow= 1, ncol = 4),widths = c(7,7,7,3))
+par(mai = c(0.5,0.5,0.5,0.15),cex = 1 ,mgp = c(1.5, 0.5, 0))
+for(j in 1:3){
+plot(ssurv(1:100,eta[1],10,dist = "gafm"), type ="l", lty = 2, ylab = "S(t)", xlab ="time",
+     main = cbind(c("No old Failures","50% informative censoring"), c("No old Failures","50% young failures missing"),
+                  c("No old Failures","Favor old"))[,j])
+lines(Result_mix[[j]][,1], type = "l")
+#lines(ssurv(1:100,exp(coef_result[[j]][1,1]),coef_result[[j]][2,1],dist = "gafm"), lty = 3)
+  
+for(i in 2:4){
+  lines(ssurv(1:100,eta[i],10,dist = "gafm"), lty = 2, col = i)
+  lines(Result_mix[[j]][,i], type = "l", col = i)
+  #lines(ssurv(1:100,exp(coef_result[[j]][1,i]),coef_result[[j]][2,i],dist = "gafm"), col = i, lty = 3)
+  
+}
+grid()
+}
+par(mai = c(0.5,0,0.3,0.),cex = 1 ,mgp = c(1.5, 0.5, 0))
+plot.new()
+legend("center", legend = c("MST = 50","MST = 60","MST = 70","MST = 80", "Est. S(t)", "True S(t)"), lty = c(NA,NA,NA,NA,1,2), pch = c(16,16,16,16,NA,NA), col = c("black","red","green","blue", "darkgray","darkgray"), pt.cex = 1, cex = 0.8)
+```
+
+
+
+
+
+
+

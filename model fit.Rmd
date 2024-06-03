@@ -1,0 +1,335 @@
+---
+title: "AFM fits"
+author: "Nikolaj Pedersen"
+date: "2024-03-03"
+output: pdf_document
+---
+
+```{r}
+library(splines2)
+library(optimx)
+
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+dat <- read.csv("C:/Users/nikol/Documents/AU/Speciale/DATA.csv")
+
+dat$Interaction <- interaction(dat$simplifiedMaterial,dat$DandasID,dat$TypeAfloebKode)
+
+dat2 <- read.table("~/AU/Speciale/Envidan data/abc-klasser-VCS.txt", header = T)
+
+dat2$ID <- paste(dat2$ID,"VC", sep = "_")
+
+dat <- merge(dat,dat2,by = "ID", all.x = T)
+
+datA <- dat[-which(dat$CL==0 & dat$CR == Inf),]
+datB <- dat[-which(dat$CL_B == 0 & dat$CR_B == Inf),]
+
+Beton <- datA[which(datA$simplifiedMaterial == "Beton" & datA$Laengde >= 1),]
+Beton$DandasID <- relevel(as.factor(Beton$DandasID),ref = 2)
+
+index <- which(Beton$Laengde >= 80)
+
+Beton$Laengde2 <- Beton$Laengde
+
+Beton$Laengde2[index] <- 0
+
+Beton$Log_Laengde2 <- log(Beton$Laengde)
+
+Beton$Log_Laengde2[index] <- 0 
+
+Beton$Laengde_over80 <- 0
+Beton$Laengde_over80[index] <- 1
+
+Beton$Disc_Dim <- ifelse(Beton$Dimension < 200, "Dim<200",ifelse(Beton$Dimension > 900,"Dim>900", "200<Dim<900"))
+
+Beton$Dim_less200 <- Beton$Dimension <200
+
+Beton$Dim_over900 <- Beton$Dimension >= 900
+
+Beton$Jord_ML <- grepl("ML",Beton$Jordart)
+
+Beton$Dybde_weird <- Beton$Dybde == 2.465
+
+Beton$Dybde_less1.2 <- Beton$Dybde <= 1.2
+
+Beton$Dybde2 <- Beton$Dybde
+Beton$Dybde2[which(Beton$Dybde_weird)] <- min(Beton$Dybde)
+
+Beton$Disc_Depth <- ifelse(Beton$Dybde < 2, "Depth<2",ifelse(Beton$Dybde > 3,"Dim>3", "2<Dim<3"))
+```
+
+```{r}
+
+covariate <- "Interaction"
+groups <- levels(droplevels(as.factor(Beton[,covariate])))
+
+form <- "1"
+ 
+dist_vec <- c("gafm","weib","ep")
+
+rm(result)
+for(g in 1:length(groups)){
+
+foo <- Beton[which(Beton[,covariate] == groups[g]),]
+fit_data<- prepare_data(cbind(foo$CL,foo$CR,0,Inf), as.formula(paste("CL~",form)) , data = foo, message =F)[[1]]
+
+n_par <- ncol(fit_data)-3
+
+N <- length(dist_vec)
+
+result_mat <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat) <- dist_vec
+for(i in 1:length(dist_vec)){
+fit <- AFM_fit(fit_data, dist = dist_vec[i])
+fit$convergence
+foo <- fit$par
+br <- BrierScore(fit_data,fit$par,dist = dist_vec[i])
+foo <- c("coef",dist_vec[i],groups[g],nrow(fit_data),fit$convergence,br,fit$value,foo)
+if(!exists("result")){
+  result <- foo
+  names(result) <- c("par","dist","group","size","conv","BrierScore","negLL",colnames(fit_data)[5:ncol(fit_data)],"scale")
+}else{
+  result <- rbind(result,foo)
+}
+}
+}
+write.csv(result, paste("~/AU/Speciale/Results/foo.csv",sep = ""))
+```
+
+```{r}
+form <- "simplifiedMaterial + DandasID+TypeAfloebKode +DandasID:TypeAfloebKode:simplifiedMaterial"
+ 
+alpha <- 0.06746074
+beta <- 0.02500638
+
+dist_vec <- c("weib","ll","ln","ep","gafm","gph")
+
+N <- length(dist_vec)
+
+name <- paste(stringr::str_replace_all(form,":",""),".csv",sep = "")
+
+ifrm(resultA)
+ifrm(resultB)
+ifrm(resultM)
+
+
+foo <- datA
+fit_data <- prepare_data(cbind(foo$CL,foo$CR,0,Inf), as.formula(paste("CL~",form)) , data = foo, message =F)[[1]]
+
+n_par <- ncol(fit_data)-3
+
+
+
+result_mat <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat) <- dist_vec
+for(i in 1:N){
+  foo <- AFM_fit(fit_data,dist = dist_vec[i])
+  result_mat[i,1:n_par] <- foo$par
+  result_mat[i,n_par+1] <- foo$value
+}
+colnames(result_mat) <- c(colnames(fit_data)[5:ncol(fit_data)],"scale","negLL")
+
+foo <- cbind(nrow(fit_data),dist_vec, result_mat)
+colnames(foo) <- c("size","dist",colnames(result_mat))
+
+resultA <- foo
+
+write.csv(resultA, paste("~/AU/Speciale/Results/resultA~",name,sep = ""))
+
+foo <- datB
+fit_data <- prepare_data(cbind(foo$CL_B,foo$CR_B,0,Inf),  as.formula(paste("CL_B~",form)), data = foo, message = F)[[1]]
+
+
+n_par <- ncol(fit_data)-3
+
+result_mat2 <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat2) <- dist_vec
+for(i in 1:N){
+  foo <- AFM_fit(fit_data,dist = dist_vec[i])
+  result_mat2[i,1:n_par] <- foo$par
+  result_mat2[i,n_par+1] <- foo$value
+}
+colnames(result_mat2) <- c(colnames(fit_data)[5:ncol(fit_data)],"scale","negLL")
+
+foo <- cbind(nrow(fit_data),dist_vec, result_mat2)
+colnames(foo) <- c("size","dist",colnames(result_mat2))
+
+resultB <- foo
+
+write.csv(resultB, paste("~/AU/Speciale/Results/resultB~",name,sep =""))
+
+foo <- datB
+foo1 <- prepare_data(cbind(foo$CL,foo$CR,0,Inf),  data = foo, message = F)
+foo2 <- prepare_data(cbind(foo$CL_B,foo$CR_B,0,Inf), expr = as.formula(paste("CL_B~",form)),data = foo, message =F)
+
+fit_data <- cbind(foo1[[1]][,-(5:ncol(foo1[[1]]))],foo2[[1]])
+colnames(fit_data)[5:8] <- paste(colnames(fit_data)[5:8],"_B",sep = "")
+rm(foo,foo1,foo2)
+
+n_par <- ncol(fit_data)-7
+
+result_mat3 <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat3) <- dist_vec
+for(i in 1:N){
+  foo <- AFM_fit_misc(fit_data,dist = dist_vec[i])
+  result_mat3[i,1:n_par] <- foo$par
+  result_mat3[i,n_par+1] <- foo$value
+}
+colnames(result_mat3) <- c(colnames(fit_data)[9:ncol(fit_data)],"scale","negLL")
+
+foo <- cbind(nrow(fit_data),dist_vec, result_mat3, alpha,beta)
+colnames(foo) <- c("size","dist",colnames(result_mat3), "alpha","beta")
+
+resultM <- foo
+
+write.csv(resultM, paste("~/AU/Speciale/Results/resultM~",name,sep = ""))
+```
+
+```{r}
+form <- "simplifiedMaterial + DandasID+TypeAfloebKode +DandasID:TypeAfloebKode:simplifiedMaterial"
+ 
+alpha <- 0.06746074
+beta <- 0.02500638
+
+name <- paste(stringr::str_replace_all(form,":",""),".csv",sep = "")
+
+ifrm(resultA)
+ifrm(resultB)
+ifrm(resultM)
+
+
+foo <- datA
+fit_data <- prepare_data(cbind(foo$CL,foo$CR,0,Inf), as.formula(paste("CL~",form)) , data = foo, message =F)[[1]]
+
+n_par <- ncol(fit_data)-3
+
+
+
+result_mat <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat) <- dist_vec
+foo <- AFM_fit(fit_data,dist = dist_vec[i])
+result_mat[i,1:n_par] <- foo$par
+result_mat[i,n_par+1] <- foo$value
+
+colnames(result_mat) <- c(colnames(fit_data)[5:ncol(fit_data)],"scale","negLL")
+
+foo <- cbind(nrow(fit_data),dist_vec, result_mat)
+colnames(foo) <- c("size","dist",colnames(result_mat))
+
+resultA <- foo
+
+write.csv(resultA, paste("~/AU/Speciale/Results/resultA~",name,sep = ""))
+
+foo <- datB
+fit_data <- prepare_data(cbind(foo$CL_B,foo$CR_B,0,Inf),  as.formula(paste("CL_B~",form)), data = foo, message = F)[[1]]
+
+
+n_par <- ncol(fit_data)-3
+
+result_mat2 <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat2) <- dist_vec
+for(i in 1:N){
+  foo <- AFM_fit(fit_data,dist = dist_vec[i])
+  result_mat2[i,1:n_par] <- foo$par
+  result_mat2[i,n_par+1] <- foo$value
+}
+colnames(result_mat2) <- c(colnames(fit_data)[5:ncol(fit_data)],"scale","negLL")
+
+foo <- cbind(nrow(fit_data),dist_vec, result_mat2)
+colnames(foo) <- c("size","dist",colnames(result_mat2))
+
+resultB <- foo
+
+write.csv(resultB, paste("~/AU/Speciale/Results/resultB~",name,sep =""))
+
+foo <- datB
+foo1 <- prepare_data(cbind(foo$CL,foo$CR,0,Inf),  data = foo, message = F)
+foo2 <- prepare_data(cbind(foo$CL_B,foo$CR_B,0,Inf), expr = as.formula(paste("CL_B~",form)),data = foo, message =F)
+
+fit_data <- cbind(foo1[[1]][,-(5:ncol(foo1[[1]]))],foo2[[1]])
+colnames(fit_data)[5:8] <- paste(colnames(fit_data)[5:8],"_B",sep = "")
+rm(foo,foo1,foo2)
+
+n_par <- ncol(fit_data)-7
+
+result_mat3 <- matrix(0,nrow = N,ncol = n_par+1)
+rownames(result_mat3) <- dist_vec
+for(i in 1:N){
+  foo <- AFM_fit_misc(fit_data,dist = dist_vec[i])
+  result_mat3[i,1:n_par] <- foo$par
+  result_mat3[i,n_par+1] <- foo$value
+}
+colnames(result_mat3) <- c(colnames(fit_data)[9:ncol(fit_data)],"scale","negLL")
+
+foo <- cbind(nrow(fit_data),dist_vec, result_mat3, alpha,beta)
+colnames(foo) <- c("size","dist",colnames(result_mat3), "alpha","beta")
+
+resultM <- foo
+
+write.csv(resultM, paste("~/AU/Speciale/Results/resultM~",name,sep = ""))
+```
+
+```{r}
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL ~DandasID+TypeAfloebKode+ Log_Laengde2 + Laengde_over80+ Dim_less200 + Dim_over900 ),
+                                
+                                #sqrt(Laengde2)+ Laengde_over80 + Dim_less200 + Dim_over900),
+            data = Beton, message = F)[[1]]
+
+foo1 <- nsk(Beton$Dimension, knots = c(200,250,300,400,500,600,700,800,900),
+                                    Boundary.knots = c(150,2800), intercept = FALSE)
+
+knots_val_dim <- sort(c(attr(foo1,"knots"),attr(foo1,"Boundary.knots")))[-1]
+
+foo1 <- nsk(Beton$Laengde, df = 10,intercept = FALSE)
+ 
+knots_val_Laengde <- sort(c(attr(foo1,"knots"),attr(foo1,"Boundary.knots")))[-1]
+
+foo1 <- nsk(Beton$Dybde2, df = 10, intercept = FALSE)
+ 
+knots_val_dybde <- sort(c(attr(foo1,"knots"),attr(foo1,"Boundary.knots")))[-1]
+
+colnames(fit_data)[grepl("nsk(Laen",colnames(fit_data),fixed = T)] <- paste("Laen_spl",paste(length(knots_val_Laengde),knots_val_Laengde,sep="_"), sep = "_")
+
+colnames(fit_data)[grepl("nsk(Dim",colnames(fit_data),fixed = T)] <- paste("Dim_spl",paste(length(knots_val_dim),knots_val_dim,sep="_"), sep = "_")
+
+colnames(fit_data)[grepl("nsk(Dybde",colnames(fit_data),fixed = T)] <- paste("Dybde_spl",paste(length(knots_val_dybde),knots_val_dybde,sep="_"), sep = "_")
+
+colnames(fit_data)
+
+time <- Sys.time()
+
+dist_vec <- c("gafm","gph","weib","ep")
+rm(result)
+for(i in 1:length(dist_vec)){
+fit <- AFM_fit(fit_data, dist = dist_vec[i], hessian = T)
+fit$convergence
+br <- BrierScore(fit_data,fit$par,dist = dist_vec[i])
+foo <- fit$par
+foo <- rbind(foo,sqrt(diag(solve(fit$hessian))))
+foo <- cbind(c("coef","sd"),dist_vec[i],fit$convergence,br,fit$value,foo)
+if(!exists("result")){
+  result <- foo
+  colnames(result) <- c("par","dist","conv","BrierScore","negLL",colnames(fit_data)[5:ncol(fit_data)],"scale")
+}else{
+  result <- rbind(result,foo)
+}
+}
+(time <- Sys.time() -time)
+
+write.csv(result, paste("~/AU/Speciale/Results/foo.csv",sep = ""))
+
+#foo2 <- c(5.50229116,0.247200482,-0.615587983,-0.128595035,-0.052965628,0.05,12.344815255)
+# 
+# foo2 <- c(9.938178987,	0.271257803,	-0.574949889,	-0.149787826,	-0.100079737,	2.899048994,	4.449232081,	5.328958044,	6.238365765,	7.493369439,	8.632614762,	10.61023353,	14.49014384,	3.465693099)
+# 
+#fit2 <- optim(foo2, LL_PH_gen,method = "L-BFGS-B", lower = c(rep(-Inf,n_par-1),0), hessian = T)
+```
+
+```{r, fig.height=6,fig.width=11}
+nskMAT <- nsk(foo$Laengde, df = 8,intercept = FALSE, trim = 0.05)
+
+plot(nskMAT,mark_knots = "all", xlim = c(0,100), ylim = c(-1.2,1.2))
+abline(h = 1, col = "red", lty = 3)
+```
+

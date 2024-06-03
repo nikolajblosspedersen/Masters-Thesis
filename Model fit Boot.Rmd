@@ -1,0 +1,124 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-03-30"
+output: pdf_document
+---
+
+```{r}
+library(MASS)
+library(splines2)
+library(optimx)
+
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+dat <- read.csv("C:/Users/nikol/Documents/AU/Speciale/DATA.csv")
+
+dat$Interaction <- interaction(dat$simplifiedMaterial,dat$DandasID,dat$TypeAfloebKode)
+
+dat2 <- read.table("~/AU/Speciale/Envidan data/abc-klasser-VCS.txt", header = T)
+
+dat2$ID <- paste(dat2$ID,"VC", sep = "_")
+
+dat <- merge(dat,dat2,by = "ID", all.x = T)
+
+datA <- dat[-which(dat$CL==0 & dat$CR == Inf),]
+datB <- dat[-which(dat$CL_B == 0 & dat$CR_B == Inf),]
+
+Beton <- datA[which(datA$simplifiedMaterial == "Beton" & datA$Laengde >= 1),]
+Beton$DandasID <- relevel(as.factor(Beton$DandasID),ref = 2)
+
+index <- which(Beton$Laengde >= 80)
+
+Beton$Laengde2 <- Beton$Laengde
+
+Beton$Laengde2[index] <- 0
+
+Beton$Log_Laengde2 <- log(Beton$Laengde)
+
+Beton$Log_Laengde2[index] <- 0 
+
+Beton$Laengde_over80 <- 0
+Beton$Laengde_over80[index] <- 1
+
+Beton$Disc_Dim <- ifelse(Beton$Dimension < 200, "Dim<200",ifelse(Beton$Dimension > 900,"Dim>900", "200<Dim<900"))
+
+Beton$Dim_less200 <- Beton$Dimension <200
+
+Beton$Dim_over900 <- Beton$Dimension >= 900
+
+Beton$Jord_ML <- grepl("ML",Beton$Jordart)
+
+Beton$Dybde_weird <- Beton$Dybde == 2.465
+
+Beton$Dybde_less1.2 <- Beton$Dybde <= 1.2
+
+Beton$Dybde2 <- Beton$Dybde
+Beton$Dybde2[which(Beton$Dybde_weird)] <- min(Beton$Dybde)
+
+Beton$Disc_Depth <- ifelse(Beton$Dybde < 2, "Depth<2",ifelse(Beton$Dybde > 3,"Dim>3", "2<Dim<3"))
+```
+
+
+```{r}
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),expr = as.formula(CL ~DandasID+TypeAfloebKode+ Log_Laengde2 + Laengde_over80+ Dim_less200 + Dim_over900),data = Beton, message = F)[[1]]
+
+n_par <- ncol(fit_data) - 3
+
+N <- 58
+
+result <- matrix(0,ncol = n_par, nrow = N)
+
+pb = txtProgressBar(min = 1, max = N, initial = 1) 
+for(i in 1:N){
+setTxtProgressBar(pb,i)
+  
+foo1 <- Beton[sample(nrow(Beton),nrow(Beton),replace = T),]
+
+fit_data <- prepare_data(cbind(foo1$CL,foo1$CR,0,Inf),expr = as.formula(CL ~DandasID+TypeAfloebKode+ Log_Laengde2 + Laengde_over80+ Dim_less200 + Dim_over900),data = foo1, message = F)[[1]]
+
+fit <- AFM_fit(fit_data,"gafm")
+
+result[i,] <- fit$par
+}
+close(pb)
+
+colnames(result) <- names(fit$par)
+
+write.csv(result, paste("~/AU/Speciale/Results/foo.csv",sep = ""))
+```
+```{r, fig.width= 10, fig.height= 4.5}
+
+
+foo <- as.data.frame(readxl::read_xlsx("~/AU/Speciale/Results/beton model bootstrap.xlsx")[,-1])
+colnames(foo) <- c("Intercept","Utility.AV","Utility.VC","Content.R","Content.S","LogLength","Length.80","Dim.200","Dim.900","Scale")
+
+GGally::ggpairs(foo,progress = F)
+
+Boot_mean <- rbind(apply(foo, 2, mean),
+      c(4.107751881,-0.07164182,-0.327568105,-0.102068908,-0.123783821,
+        -0.160180589,-0.790972926,-0.13399513,0.089829938,18.62737684))
+
+(Boot_mean <- rbind(Boot_mean,Boot_mean[1,]-Boot_mean[2,]))
+
+
+Boot_sd <- rbind(apply(foo, 2, sd),
+                 c(0.028991149,0.011471486,0.008471612,0.008394643,0.010610964,
+                   0.002575506,0.021641636,0.013762063,	0.016962196,0.755462663))
+
+(Boot_sd <- rbind(Boot_sd,Boot_sd[1,]-Boot_sd[2,]))
+
+
+colnames(foo) <- c("Intercept","Utility.AV","Utility.VC","Content.R","Content.S","LogLength","Length>80","Dim<200","Dim>900","Scale")
+
+layout(matrix(1:10,nrow= 2, ncol =5, byrow = T))
+par(mai = c(0.3,0.5,0.3,0.1), cex = 0.9 ,mgp = c(1.5, 0.5, 0))
+for(i in 1:10){
+  foo1 <- density(foo[,i])
+  plot(foo1, ylim = c(0, max(foo1$y , dnorm(mean(foo[,i]), mean(foo[,i]), sd(foo[,i])))), main = colnames(foo)[i], xlab = NA)
+  curve(dnorm(x, mean(foo[,i]), sd(foo[,i])), add = T, col = "blue")
+}
+
+```
+

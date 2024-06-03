@@ -1,0 +1,148 @@
+---
+title: "Untitled"
+author: "Nikolaj Pedersen"
+date: "2024-04-10"
+output: pdf_document
+---
+
+```{r}
+library(splines2)
+library(optimx)
+
+source("C:/Users/nikol/Documents/AU/Speciale/Functions_internal.R")
+
+dat <- read.csv("C:/Users/nikol/Documents/AU/Speciale/DATA.csv")
+
+dat$Interaction <- interaction(dat$simplifiedMaterial,dat$DandasID,dat$TypeAfloebKode)
+
+dat2 <- read.table("~/AU/Speciale/Envidan data/abc-klasser-VCS.txt", header = T)
+
+dat2$ID <- paste(dat2$ID,"VC", sep = "_")
+
+dat <- merge(dat,dat2,by = "ID", all.x = T)
+
+datA <- dat[-which(dat$CL==0 & dat$CR == Inf),]
+datB <- dat[-which(dat$CL_B == 0 & dat$CR_B == Inf),]
+
+Beton <- datA[which(datA$simplifiedMaterial == "Beton"),]
+Beton$DandasID <- relevel(as.factor(Beton$DandasID),ref = 2)
+
+index <- which(Beton$Laengde >= quantile(Beton$Laengde,0.95))
+
+Beton$Laengde2 <- Beton$Laengde
+
+Beton$Laengde2[index] <- 0
+
+Beton$Laengde_out <- 0
+Beton$Laengde_out[index] <- 1
+
+index <- which(Beton$Dimension >= quantile(Beton$Dimension,0.95))
+
+Beton$Dimension2 <- Beton$Dimension
+Beton$Dimension2[index] <- 150
+
+Beton$Dim_out <- 0
+Beton$Dim_out[index] <- 1
+
+Beton$Dim_less200 <- Beton$Dimension <200
+
+Beton$Dim_over900 <- Beton$Dimension >= 900
+```
+
+
+```{r}
+lagakos <- function(data, par,dist){
+  n_par <- ncol(data)-3
+  if(length(par) != n_par ){stop()}
+  
+  beta <- par[1:(length(par)-1)]
+  sigma <- par[length(par)]
+  n_par <- ncol(data)-3
+  if(n_par == 2){
+    eta <- exp(beta*data[,5])
+  }else{
+  eta <- exp(rowSums(outer(rep(1,nrow(data)),beta)*data[5:(ncol(data)-1)]))
+  }
+  
+ S_CL <- ssurv(data[,1],eta,sigma, dist)
+ log_S_CL <- log(S_CL)
+ 
+ S_CR <- ssurv(data[,2],eta,sigma, dist)
+ log_S_CR <- ifelse(data[,2] == Inf,0,log(S_CR))
+ result <- ifelse(S_CR == 0,log(S_CL),(S_CL*log_S_CL-S_CR*log_S_CR)/(S_CL-S_CR))
+ 
+ return(result)
+}
+Eta <- function(data, par){
+beta <- par[1:(length(par)-1)]
+  sigma <- par[length(par)]
+  n_par <- ncol(data)-3
+  if(n_par == 2){
+    eta <- exp(beta*data[,5])
+  }else{
+  eta <- exp(rowSums(outer(rep(1,nrow(data)),beta)*data[5:(ncol(data)-1)]))
+  }
+  return(eta)
+}
+```
+
+
+```{r,fig.width= 11, fig.height=4}
+par(mai = c(0.5,0.5,0.3,0.05), mfrow = c(1,3),cex = 1 ,mgp = c(1.5, 0.5, 0))
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL ~DandasID+TypeAfloebKode),
+            data = Beton, message = F)[[1]]
+
+par <- c(3.505747966,-0.100412612,-0.348812249,-0.115650076,-0.133958428,19.89699241)
+
+L <- lagakos(fit_data,par,"gafm")
+
+plot(L,Beton$YearEtableret, cex = 0.4,  xlim = c(-2,1),ylim = c(2024,1923),
+     xlab = "Lagakos res.",ylab = "Year of construction",main = "Res. against const. year")
+plot(Beton$YearEtableret,Beton$AgeFI, cex = 0.4, main = "Const. year against ins. age", xlab = "Year of construction",ylab = "Age at inspection")
+plot(L,Beton$AgeFI, cex = 0.4, xlim = c(-2,1),
+     xlab = "Lagakos res.",ylab = "Age at inspection",main = "Res. against ins. age")
+
+plot(L)
+plot(L,Beton$Laengde, cex = 0.5)
+plot(L,Beton$Dimension, cex = 0.5)
+```
+
+
+
+```{r,fig.width= 11, fig.height=7}
+
+Beton <- datA[which(datA$simplifiedMaterial == "Beton"),]
+Beton$DandasID <- relevel(factor(Beton$DandasID),ref = 2)
+
+index <- which(Beton$Laengde >= quantile(Beton$Laengde,0.95))
+
+Beton$Laengde2 <- Beton$Laengde
+
+Beton$Laengde2[index] <- 0
+
+Beton$Laengde_out <- 0
+Beton$Laengde_out[index] <- 1
+
+Beton$Dim_less200 <- Beton$Dimension <200
+
+Beton$Dim_over900 <- Beton$Dimension >= 900
+
+
+#f <- function(x){ifelse(x < quantile(Beton$Laengde,0.95),sqrt(x),sqrt(quantile(Beton$Laengde,0.95)))}
+
+fit_data <- prepare_data(cbind(Beton$CL,Beton$CR,0,Inf),
+            expr = as.formula(CL ~DandasID+TypeAfloebKode + sqrt(Laengde2) + Laengde_out+ Dim_less200 + Dim_over900),
+            
+            data = Beton, message = F)[[1]]
+
+par <- c(3.91769816,-0.067518779,-0.323419741,-0.103339977,-0.128100696,
+         -0.060436679,-0.602444492,-0.136329506,0.093113826,18.40437328)
+
+L <- lagakos(fit_data,par,"gafm")
+```
+
+```{r}
+plot(L,Beton$Dybde, cex = 0.5)
+```
+
